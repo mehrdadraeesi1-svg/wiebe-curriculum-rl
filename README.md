@@ -7,7 +7,6 @@
 > **Official code for:**
 > Raeesi M, Shojaeefard MH. *Physics-Informed Curriculum Learning for Real-time
 > Calibration of Double Wiebe Combustion Models: A Deep Reinforcement Learning
-# Approach.* Energy Conversion and Management: X, 2026.
 
 ---
 
