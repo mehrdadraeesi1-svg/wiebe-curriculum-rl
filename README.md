@@ -132,4 +132,4 @@ The experimental dataset used in the paper originates from:
 
 MIT License — © 2026 Mehrdad Raeesi, Iran University of Science and Technology
 
-**Contact:**  mehrdadraeesi.ir;shojaeefard@iust.ac.ir
+**Contact:**  mehrdadraeesi@gmail.com;shojaeefard@iust.ac.ir
