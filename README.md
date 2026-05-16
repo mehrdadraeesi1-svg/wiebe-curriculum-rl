@@ -1,13 +1,13 @@
 # Physics-Informed Curriculum RL for Double Wiebe Combustion Model Calibration
 
-[![Paper](https://img.shields.io/badge/Paper-Under_Review-orange)](https://doi.org/XXXX)
+[![Paper](https://img.shields.io/badge/Paper-Energy_Conversion_and_Management:_X-blue)](https://doi.org/XXXX)
 [![Python](https://img.shields.io/badge/Python-3.9+-green)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 > **Official code for:**
 > Raeesi M, Shojaeefard MH. *Physics-Informed Curriculum Learning for Real-time
 > Calibration of Double Wiebe Combustion Models: A Deep Reinforcement Learning
-# Approach.* Energy Conversion and Management: X, 2026.
+> Approach.* Energy Conversion and Management: X, 2026.
 
 ---
 
@@ -121,8 +121,9 @@ The experimental dataset used in the paper originates from:
   title   = {Physics-Informed Curriculum Learning for Real-time Calibration
              of Double Wiebe Combustion Models},
   author  = {Raeesi, Mehrdad and Shojaeefard, Mohammad Hassan},
-  journal = {Under review},
+  journal = {Energy Conversion and Management: X},
   year    = {2026},
+  doi     = {XXXX}
 }
 ```
 
@@ -132,4 +133,4 @@ The experimental dataset used in the paper originates from:
 
 MIT License — © 2026 Mehrdad Raeesi, Iran University of Science and Technology
 
-**Contact:** mehrdadraeesi@gmail.com;shojaeefard@iust.ac.ir
+**Contact:** shojaeefard@iust.ac.ir

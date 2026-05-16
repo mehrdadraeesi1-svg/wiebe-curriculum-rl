@@ -10,8 +10,8 @@ long_description = (this_directory / "README.md").read_text(encoding='utf-8')
 setup(
     name='rl-wiebe-framework',
     version='0.1.0',
-    author='Your Name',
-    author_email='your.email@example.com',
+    author='Mehrdad Raeesi',
+    author_email='mehrdadraeesi@gmail.com',
     description='Reinforcement Learning framework for Wiebe coefficient prediction',
     long_description=long_description,
     long_description_content_type='text/markdown',

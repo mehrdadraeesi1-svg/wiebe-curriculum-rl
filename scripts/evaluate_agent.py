@@ -21,7 +21,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 import sys
 sys.path.append('..')
 
-from src.environment.wiebe_env import WiebeEnvironment
+from src.environment.wiebe_env import WiebeEnvV4 as WiebeEnvironment
 from src.utils.data_utils import (
     load_experimental_data,
     generate_synthetic_dataset,

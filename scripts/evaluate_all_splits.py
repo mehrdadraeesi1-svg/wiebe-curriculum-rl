@@ -38,8 +38,8 @@ HERE = Path(__file__).resolve().parent
 PROJECT_ROOT = HERE.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from data_loader import WiebeDataLoader  # noqa: E402
-from src.environment.wiebe_env_v4 import (  # noqa: E402
+from src.utils.data_loader import WiebeDataLoader  # noqa: E402
+from src.environment.wiebe_env import (  # noqa: E402
     WiebeEnvV4,
     RewardWeights,
     PhysLimits,

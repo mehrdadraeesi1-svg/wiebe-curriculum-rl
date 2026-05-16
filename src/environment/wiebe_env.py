@@ -593,3 +593,6 @@ class WiebeEnvV4(gym.Env):
             "safety_violation": safety_violation,
         }
         return reward, info
+
+# Alias for backward compatibility
+WiebeEnvironment = WiebeEnvV4
