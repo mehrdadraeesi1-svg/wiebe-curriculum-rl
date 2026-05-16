@@ -1,0 +1,38 @@
+# configs/default.yaml
+seed: 42
+env:
+  type: "advanced"     # or "basic"
+  vec_env: 8
+  normalize_obs: true
+  normalize_reward: false
+  reward:
+    w_r2: 0.5
+    w_rmse: 0.3
+    w_nrmse_tdc: 0.2
+    penalty_invalid: 5.0
+  action_bounds:
+    a: [0.1, 8.0]
+    m: [0.5, 3.0]
+    dtheta: [2.0, 40.0]
+train:
+  algo: "PPO"
+  total_timesteps: 500_000
+  learning_rate: 3e-4
+  clip_range: 0.2
+  ent_coef: 0.005
+  n_steps: 2048
+  batch_size: 256
+  gae_lambda: 0.95
+eval:
+  every_steps: 50_000
+  n_episodes: 10
+  save_best: true
+data:
+  path: "data/exp_cases.csv"
+  test_size: 0.15
+  val_size: 0.15
+  stratify_by: ["rpm_bin","load_bin"]
+logging:
+  tensorboard: true
+  wandb: false
+  output_dir: "runs"
