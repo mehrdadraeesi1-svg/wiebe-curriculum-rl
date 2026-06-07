@@ -1,8 +1,10 @@
 # Physics-Informed Curriculum RL for Double Wiebe Combustion Model Calibration
 
-[![Paper](https://img.shields.io/badge/Paper)](https://doi.org/10.1016/j.ecmx.2026.101986)
-[![Python](https://img.shields.io/badge/Python-3.9+-green)](https://python.org)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![Paper](https://img.shields.io/badge/Paper-Energy_Conversion_&_Management:_X-blue)](https://doi.org/10.1016/j.ecmx.2026.101986)
+[![Python](https://img.shields.io/badge/Python-3.9+-green.svg)](https://python.org)
+[![Framework](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?logo=PyTorch&logoColor=white)](https://pytorch.org/)
+[![RL Library](https://img.shields.io/badge/Stable--Baselines3-2.0+-purple.svg)](https://stable-baselines3.readthedocs.io/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Official code for:**
 > Raeesi M, Shojaeefard MH. *Physics-Informed Curriculum Learning for Real-time
