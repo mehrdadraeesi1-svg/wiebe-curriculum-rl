@@ -120,7 +120,7 @@ docs/                         data format, model notes, reproducibility matrix
 ## Validation
 
 `pytest` runs 40+ tests on every push (Linux, Windows, macOS; Python 3.9
-and 3.12):
+to 3.12):
 
 * **solver** – isentropic motored compression, exact discrete energy
   balance, released heat equals fuel energy, monotonic effect of heat

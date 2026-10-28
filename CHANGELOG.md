@@ -64,7 +64,7 @@ the published numbers remain reproducible.
   (`train_on_split.py`), GA baseline (`src/baselines/ga.py`), XGBoost
   baseline (`xgboost_baseline.py`).
 * Test suite (`tests/`, pytest) and GitHub Actions CI on Linux, Windows and
-  macOS with Python 3.9 and 3.12.
+  macOS with Python 3.9 to 3.12.
 * `docs/DATA_FORMAT.md`, `docs/MODEL.md`, `docs/REPRODUCIBILITY.md`,
   `CITATION.cff`.
 
