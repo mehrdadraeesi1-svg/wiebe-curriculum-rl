@@ -1,38 +1,36 @@
-# configs/default.yaml
-seed: 42
-env:
-  type: "advanced"     # or "basic"
-  vec_env: 8
-  normalize_obs: true
-  normalize_reward: false
-  reward:
-    w_r2: 0.5
-    w_rmse: 0.3
-    w_nrmse_tdc: 0.2
-    penalty_invalid: 5.0
-  action_bounds:
-    a: [0.1, 8.0]
-    m: [0.5, 3.0]
-    dtheta: [2.0, 40.0]
-train:
-  algo: "PPO"
-  total_timesteps: 500_000
-  learning_rate: 3e-4
-  clip_range: 0.2
-  ent_coef: 0.005
-  n_steps: 2048
-  batch_size: 256
+# Default training configuration (read by scripts/train_on_split.py --config).
+# Values are the ones used for the results of Ref. [1]; command-line flags
+# override them.
+
+algorithm: PPO
+# Network: separate actor/critic MLPs [256, 256] (fixed in scripts/train_on_split.py).
+# Operating-condition noise at beta = 1 (std): speed 200 rpm, lambda 0.08,
+# intake pressure 20 kPa, intake temperature 20 K (WiebeEnvV4.randomization_base).
+
+hyperparameters:
+  total_timesteps: 300000
+  n_envs: 4
+  learning_rate: 3.0e-4
+  n_steps: 2048          # per environment
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
   gae_lambda: 0.95
-eval:
-  every_steps: 50_000
-  n_episodes: 10
-  save_best: true
-data:
-  path: "data/exp_cases.csv"
-  test_size: 0.15
-  val_size: 0.15
-  stratify_by: ["rpm_bin","load_bin"]
-logging:
-  tensorboard: true
-  wandb: false
-  output_dir: "runs"
+  clip_range: 0.2
+  ent_coef: 0.01
+  checkpoint_freq: 10000
+  eval_freq: 5000
+
+reward_weights:
+  w_nrmse: 1.0           # pressure-trace NRMSE
+  w_r2: 0.2              # coefficient of determination
+  w_peakP: 0.5           # peak pressure outside [2, 200] bar
+  w_ca50: 0.3            # |CA50 error|; active only if the case provides ca50_deg
+  w_tb: 0.1              # peak temperature above 4000 K
+  w_xb: 0.2              # burn completeness (target 0.98) and monotonicity
+
+curriculum:
+  mode: synced           # synced | legacy | fixed-final (see train_on_split.py)
+  schedule_steps: [0, 100000, 200000]   # total environment steps
+  spans: [0.50, 0.75, 1.00]             # alpha_k, action-bound expansion
+  noise_scales: [0.30, 0.65, 1.00]      # beta_k, operating-condition noise

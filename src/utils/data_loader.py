@@ -10,7 +10,6 @@ from typing import List, Dict, Any, Tuple
 import logging
 from sklearn.model_selection import train_test_split
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -129,7 +128,18 @@ class WiebeDataLoader:
             'crank_angle': theta,
             'pressure': pressure_Pa
         }
-        
+
+        # Optional fields
+        # - ca50_deg: measured CA50 [deg ATDC]; when present it activates the
+        #   combustion-phasing term of the reward (w_ca50). The dataset of the
+        #   associated study did not provide it, so that term was inactive there.
+        ca50 = ops.get('ca50_deg', data.get('ca50_deg'))
+        if ca50 is not None:
+            case['ca50_deg'] = float(ca50)
+        # - ground_truth_params: known parameters (synthetic cases only)
+        if 'ground_truth_params' in data:
+            case['ground_truth_params'] = dict(data['ground_truth_params'])
+
         return case
     
     def split_train_test(
@@ -322,3 +332,22 @@ if __name__ == "__main__":
         print(f"  CR: {example['compression_ratio']:.1f}")
         print(f"  Spark timing: {example['spark_timing']:.1f}°CA")
         print(f"  Pressure points: {len(example['pressure'])}")
+
+
+def load_case(json_file) -> Dict[str, Any]:
+    """Load a single JSON case file (see docs/DATA_FORMAT.md)."""
+    json_file = Path(json_file)
+    loader = WiebeDataLoader.__new__(WiebeDataLoader)
+    loader.json_dir, loader.cases = json_file.parent, []
+    case = loader._load_single_case(json_file)
+    if case is None:
+        raise ValueError(f"Invalid case file: {json_file}")
+    return case
+
+
+def load_cases(path) -> List[Dict[str, Any]]:
+    """Load one JSON file or every ``*.json`` file in a directory."""
+    path = Path(path)
+    if path.is_dir():
+        return WiebeDataLoader(str(path)).load_all_cases()
+    return [load_case(path)]

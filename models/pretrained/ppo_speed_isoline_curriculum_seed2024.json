@@ -1,0 +1,106 @@
+{
+  "name": "ppo_double_speed_isoline_holdout_curriculum_seed2024",
+  "algorithm": "PPO",
+  "wiebe_type": "double",
+  "seq_len": 20,
+  "use_enhanced_obs": true,
+  "split_strategy": "speed_isoline_holdout[N=3000rpm]",
+  "n_train": 1079,
+  "reward_weights": {
+    "w_nrmse": 1.0,
+    "w_r2": 0.2,
+    "w_peakP": 0.5,
+    "w_ca50": 0.3,
+    "w_tb": 0.1,
+    "w_xb": 0.2
+  },
+  "curriculum_mode": "synced",
+  "eval_action_span": 1.0,
+  "training_envelope": {
+    "speed_rpm": [
+      1500.0,
+      4500.0
+    ],
+    "intake_pressure_kPa": [
+      100.5,
+      301.5
+    ],
+    "lambda": [
+      0.9435697340827737,
+      2.0682293232301316
+    ],
+    "intake_temperature_K": [
+      315.95,
+      319.75
+    ]
+  },
+  "normalization": {
+    "dataset_stats": {
+      "speed_mean": 2598.67562557924,
+      "speed_std": 1103.2038890038937,
+      "lambda_mean": 1.3443768699408254,
+      "lambda_std": 0.22834683671697062,
+      "p_mean": 214175.99629286377,
+      "p_std": 44036.241166237014,
+      "t_mean": 318.2322057460612,
+      "t_std": 0.348143629369107
+    },
+    "pressure_scale": 7336437.98828125,
+    "dp_scale": 241214.75219714642,
+    "reference_geometry": {
+      "bore": 0.083,
+      "stroke": 0.0923,
+      "connecting_rod": 0.1527,
+      "compression_ratio": 12.5
+    }
+  },
+  "package_version": "1.0.0",
+  "holdout_speed_rpm": 3000.0,
+  "curriculum": {
+    "schedule_steps": [
+      0,
+      100000,
+      200000
+    ],
+    "spans": [
+      0.5,
+      0.75,
+      1.0
+    ],
+    "noise_scales": [
+      0.3,
+      0.65,
+      1.0
+    ],
+    "stage_switches_at_total_steps": [
+      106496,
+      212992
+    ]
+  },
+  "training": "scripts/train_on_split.py --curriculum synced, 300,000 steps, 4 environments, seed 2024; best validation checkpoint",
+  "test_result_speed_isoline": {
+    "n_test": 59,
+    "r2": 0.9801,
+    "nrmse_pct": 3.58,
+    "success_pct": 100.0,
+    "note": "59 held-out 3000 rpm points; training-set normalisation, full parameter box. Mean over the three seeds: 83.1 +/- 18.3 % success."
+  },
+  "note": "Normalisation statistics computed on the training split only (aggregate statistics; no raw data of Yuan et al. 2024 included).",
+  "selection": {
+    "rule": "highest strict success rate on the 120 validation cases among seeds 42, 123, 2024 (test set not used for selection)",
+    "validation": {
+      "seed_42": {
+        "r2": 0.9415,
+        "success_pct": 50.0
+      },
+      "seed_123": {
+        "r2": 0.9441,
+        "success_pct": 60.0
+      },
+      "seed_2024": {
+        "r2": 0.9524,
+        "success_pct": 61.7
+      }
+    }
+  }
+}

@@ -18,7 +18,7 @@ important improvements:
      self-contained evidence.
 
 Run:
-    python -m scripts.stage5_compensation_analysis
+    python scripts/compensation_analysis.py
 """
 
 from __future__ import annotations
@@ -72,36 +72,72 @@ TARGET_LABELS = (
 # CV (coefficient of variation) on successive differences
 # ---------------------------------------------------------------------------
 
-def compute_cv_of_differences(values: np.ndarray) -> float:
-    """CV of successive differences in a sorted parameter sequence.
+def compute_smoothness_metrics(values: np.ndarray) -> Dict[str, float]:
+    """Multiple smoothness metrics for a parameter sequence.
 
-    If parameters are smooth (good), |Delta values| are small and their
-    coefficient of variation is low. If parameters jump between bounds
-    (compensation effect), |Delta values| are large and erratic, and CV
-    blows up.
+    All metrics are defined so that LOWER = SMOOTHER (better).
 
-    Returns CV as a fraction (multiply by 100 for percent).
+    Three complementary metrics are reported:
+
+    1. **Normalised standard deviation** (`norm_std`)::
+
+           norm_std = std(values) / |mean(values)|
+
+       Low values mean the parameter is approximately constant across
+       the isoline. This is the most direct measure of "flatness".
+       Robust to outliers.
+
+    2. **Total variation normalised by range** (`tv_ratio`)::
+
+           tv_ratio = sum(|diff(values)|) / ((n-1) * range(values))
+
+       This is in [0, 1]. A monotonic sequence returns 1/(n-1) (very
+       small); a zig-zag sequence that repeatedly jumps across the full
+       range returns close to 1. This is the standard signal-processing
+       measure of "jumpiness".
+
+    3. **Median absolute deviation of differences normalised by range**
+       (`mad_ratio`). Robust to outliers; equals 0 for a constant
+       sequence.
+
+    Returns a dict with all three metrics.
+
+    Note: the earlier "CV of successive differences" metric was
+    discarded because it is dominated by single outliers in an
+    otherwise flat signal and gave counter-intuitive rankings.
     """
     values = np.asarray(values, dtype=np.float64)
     if len(values) < 2:
-        return 0.0
+        return {"norm_std": 0.0, "tv_ratio": 0.0, "mad_ratio": 0.0}
+
+    mean_abs = abs(values.mean()) + 1e-9
+    rng = values.max() - values.min() + 1e-9
+
     diffs = np.abs(np.diff(values))
-    mean_diff = diffs.mean()
-    if mean_diff < 1e-9:
-        return 0.0
-    std_diff = diffs.std()
-    return float(std_diff / (mean_diff + 1e-9))
+
+    norm_std = float(values.std() / mean_abs)
+    tv_ratio = float(diffs.sum() / (len(diffs) * rng))
+    mad_ratio = float(np.median(diffs) / rng)
+
+    return {
+        "norm_std": norm_std,
+        "tv_ratio": tv_ratio,
+        "mad_ratio": mad_ratio,
+    }
 
 
-def compute_per_parameter_cvs(values_dict: Dict[str, List[float]]) -> Dict[str, float]:
-    """CV of successive differences for every parameter key."""
-    return {k: compute_cv_of_differences(np.asarray(v))
+def compute_per_parameter_smoothness(
+    values_dict: Dict[str, List[float]],
+) -> Dict[str, Dict[str, float]]:
+    return {k: compute_smoothness_metrics(np.asarray(v))
             for k, v in values_dict.items()}
 
 
-def aggregate_cv(cvs: Dict[str, float]) -> float:
-    """Single scalar summary -- mean CV across all nine parameters."""
-    return float(np.mean(list(cvs.values())))
+def aggregate_smoothness(
+    metrics_dict: Dict[str, Dict[str, float]], key: str = "tv_ratio",
+) -> float:
+    """Mean of a specific metric across all parameters."""
+    return float(np.mean([m[key] for m in metrics_dict.values()]))
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +171,10 @@ def run_analysis(
     data_dir: Path, ppo_model_path: Path, ga_labels_path: Path,
     split_file: Path, output_dir: Path,
     isoline_speed_rpm: float = 2000.0, speed_tol_rpm: float = 50.0,
+    normalization: str = "train", action_span: float = 0.5,
 ) -> None:
+    """``normalization='test'`` and ``action_span=0.5`` reproduce Ref. [1]
+    (the v0.x script normalised with the isoline cases themselves)."""
     loader = WiebeDataLoader(str(data_dir))
     all_cases = loader.load_all_cases()
     id_to_case = {str(c["case_id"]): c for c in all_cases}
@@ -180,15 +219,18 @@ def run_analysis(
     # Load the PPO model trained on the same split
     logger.info("Loading PPO model from %s", ppo_model_path)
     ppo = PPO.load(str(ppo_model_path), device="cpu")
+    norm = None
+    if normalization == "train":
+        train_cases = [id_to_case[cid] for cid in train_ids if cid in id_to_case]
+        norm = WiebeEnvV4(wiebe_type="double", cases=train_cases, data_dir="").get_normalization()
     env = WiebeEnvV4(
         wiebe_type="double", seq_len=20,
         cases=isoline_cases, data_dir=str(data_dir),
         phys_limits=PhysLimits(), reward_weights=RewardWeights(),
-        curriculum={"stages": [2], "schedule_steps": [0]},
-        use_enhanced_obs=True, seed=42,
+        curriculum={"stages": [0], "schedule_steps": [0],
+                    "spans": [action_span], "noise_scales": [0.0]},
+        use_enhanced_obs=True, seed=42, normalization=norm,
     )
-    env.global_step = 10_000_000
-    env.curriculum_stage = max(env.stage_count - 1, 0)
 
     # Collect parameter sequences, tagging each case with train/test status
     loads_kpa = []
@@ -250,44 +292,88 @@ def run_analysis(
     xgb_test = _select_test(xgb_seq)
     ppo_test = _select_test(ppo_seq)
 
-    cv_ga = compute_per_parameter_cvs(ga_test)
-    cv_xgb = compute_per_parameter_cvs(xgb_test)
-    cv_ppo = compute_per_parameter_cvs(ppo_test)
+    # ---------- bound saturation of the PPO trajectory ----------
+    from src.calibrate import effective_bounds
+    eff = effective_bounds(env)
+    ppo_bound_pct = {}
+    for k in TARGET_KEYS:
+        lo, hi = eff[k]
+        v = np.asarray(ppo_test[k])
+        tol = 1e-3 * (hi - lo)
+        ppo_bound_pct[k] = 100.0 * float(np.mean((v <= lo + tol) | (v >= hi - tol)))
+        if ppo_bound_pct[k] >= 50.0:
+            logger.warning("PPO %s is on an admissible bound at %.0f%% of test points; "
+                           "its TV ratio reflects saturation, not regularisation.",
+                           k, ppo_bound_pct[k])
 
-    cv_ga_overall = aggregate_cv(cv_ga)
-    cv_xgb_overall = aggregate_cv(cv_xgb)
-    cv_ppo_overall = aggregate_cv(cv_ppo)
+    sm_ga = compute_per_parameter_smoothness(ga_test)
+    sm_xgb = compute_per_parameter_smoothness(xgb_test)
+    sm_ppo = compute_per_parameter_smoothness(ppo_test)
 
-    logger.info("=" * 60)
-    logger.info("CV on test-set parameter sequences (lower = smoother)")
-    logger.info("=" * 60)
-    logger.info("  GA:      %.4f  (%.1f%%)", cv_ga_overall, 100 * cv_ga_overall)
-    logger.info("  XGBoost: %.4f  (%.1f%%)", cv_xgb_overall, 100 * cv_xgb_overall)
-    logger.info("  PPO:     %.4f  (%.1f%%)", cv_ppo_overall, 100 * cv_ppo_overall)
+    # Aggregate by each metric
+    agg_ga = {k: aggregate_smoothness(sm_ga, k)
+              for k in ["norm_std", "tv_ratio", "mad_ratio"]}
+    agg_xgb = {k: aggregate_smoothness(sm_xgb, k)
+               for k in ["norm_std", "tv_ratio", "mad_ratio"]}
+    agg_ppo = {k: aggregate_smoothness(sm_ppo, k)
+               for k in ["norm_std", "tv_ratio", "mad_ratio"]}
+
+    logger.info("=" * 70)
+    logger.info("Smoothness metrics on test-set parameter sequences")
+    logger.info("(lower = smoother = better)")
+    logger.info("=" * 70)
+    logger.info("  Metric                      GA       XGBoost   PPO")
+    logger.info("  --------------------------  -------  -------   -------")
+    for key, label in [
+        ("norm_std", "Normalised std"),
+        ("tv_ratio", "Total variation ratio"),
+        ("mad_ratio", "MAD of diffs / range"),
+    ]:
+        logger.info("  %-25s  %7.4f  %7.4f   %7.4f",
+                    label, agg_ga[key], agg_xgb[key], agg_ppo[key])
+
     logger.info("")
-    logger.info("Per-parameter CV:")
+    logger.info("Per-parameter (using TV ratio):")
     for k in TARGET_KEYS:
-        logger.info("  %-15s  GA=%.3f  XGB=%.3f  PPO=%.3f",
-                    k, cv_ga[k], cv_xgb[k], cv_ppo[k])
+        logger.info(
+            "  %-15s  GA=%.3f  XGB=%.3f  PPO=%.3f",
+            k,
+            sm_ga[k]["tv_ratio"],
+            sm_xgb[k]["tv_ratio"],
+            sm_ppo[k]["tv_ratio"],
+        )
 
-    # ---------- Save CV table ----------
-    cv_rows = []
+    # ---------- Save metrics table ----------
+    rows = []
     for k in TARGET_KEYS:
-        cv_rows.append({
+        rows.append({
             "parameter": k,
-            "cv_ga": cv_ga[k],
-            "cv_xgboost": cv_xgb[k],
-            "cv_ppo": cv_ppo[k],
+            "ga_norm_std": sm_ga[k]["norm_std"],
+            "xgb_norm_std": sm_xgb[k]["norm_std"],
+            "ppo_norm_std": sm_ppo[k]["norm_std"],
+            "ga_tv_ratio": sm_ga[k]["tv_ratio"],
+            "xgb_tv_ratio": sm_xgb[k]["tv_ratio"],
+            "ppo_tv_ratio": sm_ppo[k]["tv_ratio"],
+            "ga_mad_ratio": sm_ga[k]["mad_ratio"],
+            "xgb_mad_ratio": sm_xgb[k]["mad_ratio"],
+            "ppo_mad_ratio": sm_ppo[k]["mad_ratio"],
+            "ppo_at_bound_pct": ppo_bound_pct[k],
         })
-    cv_rows.append({
+    rows.append({
         "parameter": "MEAN",
-        "cv_ga": cv_ga_overall,
-        "cv_xgboost": cv_xgb_overall,
-        "cv_ppo": cv_ppo_overall,
+        "ga_norm_std": agg_ga["norm_std"],
+        "xgb_norm_std": agg_xgb["norm_std"],
+        "ppo_norm_std": agg_ppo["norm_std"],
+        "ga_tv_ratio": agg_ga["tv_ratio"],
+        "xgb_tv_ratio": agg_xgb["tv_ratio"],
+        "ppo_tv_ratio": agg_ppo["tv_ratio"],
+        "ga_mad_ratio": agg_ga["mad_ratio"],
+        "xgb_mad_ratio": agg_xgb["mad_ratio"],
+        "ppo_mad_ratio": agg_ppo["mad_ratio"],
     })
-    cv_df = pd.DataFrame(cv_rows)
+    smoothness_df = pd.DataFrame(rows)
     output_dir.mkdir(parents=True, exist_ok=True)
-    cv_df.to_csv(output_dir / "cv_table.csv", index=False)
+    smoothness_df.to_csv(output_dir / "smoothness_table.csv", index=False)
 
     # ---------- Figure with CV annotations ----------
     plt.rcParams.update({
@@ -312,7 +398,7 @@ def run_analysis(
         ax.plot(loads_arr[test_mask], ga_vals[test_mask],
                 "o-", color="#D4537E", alpha=0.7, markersize=4,
                 linewidth=1.0,
-                label=f"GA (test)  CV={cv_ga[k]*100:.1f}%")
+                label=f"GA  TV={sm_ga[k]['tv_ratio']:.3f}")
 
         # XGBoost
         xg_vals = np.asarray(xgb_seq[k])
@@ -322,7 +408,7 @@ def run_analysis(
         ax.plot(loads_arr[test_mask], xg_vals[test_mask],
                 "^--", color="#639922", alpha=0.7, markersize=4,
                 linewidth=1.0,
-                label=f"XGBoost (test)  CV={cv_xgb[k]*100:.1f}%")
+                label=f"XGBoost  TV={sm_xgb[k]['tv_ratio']:.3f}")
 
         # PPO
         pp_vals = np.asarray(ppo_seq[k])
@@ -332,7 +418,7 @@ def run_analysis(
         ax.plot(loads_arr[test_mask], pp_vals[test_mask],
                 "s-", color="#534AB7", alpha=0.85, markersize=4,
                 linewidth=1.5,
-                label=f"PPO (test)  CV={cv_ppo[k]*100:.1f}%")
+                label=f"PPO  TV={sm_ppo[k]['tv_ratio']:.3f}")
 
         ax.set_title(label, fontsize=11, fontweight="normal")
         ax.set_xlabel("Intake pressure [kPa]", fontsize=9)
@@ -343,11 +429,12 @@ def run_analysis(
         f"Wiebe parameters along the "
         f"N = {int(isoline_speed_rpm)} RPM isoline: "
         "GA (pseudo-target), XGBoost, PPO\n"
-        f"CV of successive differences — overall: "
-        f"GA={cv_ga_overall*100:.1f}%, "
-        f"XGBoost={cv_xgb_overall*100:.1f}%, "
-        f"PPO={cv_ppo_overall*100:.1f}%  "
-        "(faint markers = train, solid = test)",
+        "Smoothness measured by Total Variation (TV) ratio, "
+        "lower = smoother; "
+        f"overall: GA TV={agg_ga['tv_ratio']:.3f}, "
+        f"XGBoost TV={agg_xgb['tv_ratio']:.3f}, "
+        f"PPO TV={agg_ppo['tv_ratio']:.3f}  "
+        "(faint = train, solid = test)",
         fontsize=11, y=1.00,
     )
     fig.tight_layout()
@@ -358,45 +445,101 @@ def run_analysis(
 
     # ---------- Markdown summary ----------
     lines = [
-        "# Stage 5 -- Compensation Effect Analysis\n",
+        "# Stage 5 -- Compensation Effect Analysis (revised with proper smoothness metrics)\n",
         f"- Isoline: N = {int(isoline_speed_rpm)} +/- "
         f"{int(speed_tol_rpm)} RPM",
         f"- Cases plotted: {len(loads_kpa)} "
         f"(train: {int(train_mask.sum())}, test: {int(test_mask.sum())})",
         f"- Split file: `{split_file.name}`",
         "",
-        "## Coefficient of Variation of successive parameter differences",
+        "## Smoothness metrics (lower = smoother = better)",
         "",
-        "CV is computed on `|diff(values)|` along the isoline, sorted by "
-        "intake pressure. Lower CV means smoother parameter transitions.",
+        "Three complementary measures, all computed on the test-set "
+        "sequence sorted by intake pressure:",
         "",
-        "| Parameter | GA | XGBoost | PPO |",
-        "|---|---|---|---|",
+        "- **Normalised std**: `std(values) / |mean(values)|` -- "
+        "direct measure of flatness, robust to single outliers.",
+        "- **TV ratio (Total Variation ratio)**: "
+        "`sum(|diff|) / (n * range)` -- standard signal-processing "
+        "measure of zig-zag behaviour, lies in [0,1].",
+        "- **MAD ratio**: "
+        "`median(|diff|) / range` -- robust measure unaffected by "
+        "any single outlier.",
+        "",
+        "### TV ratio (primary metric)",
+        "",
+        "| Parameter | GA | XGBoost | PPO | PPO on bound (%) |",
+        "|---|---|---|---|---|",
     ]
     for k in TARGET_KEYS:
         lines.append(
-            f"| {k} | {cv_ga[k]*100:.1f}% | "
-            f"{cv_xgb[k]*100:.1f}% | {cv_ppo[k]*100:.1f}% |"
+            f"| {k} | {sm_ga[k]['tv_ratio']:.3f} | "
+            f"{sm_xgb[k]['tv_ratio']:.3f} | "
+            f"{sm_ppo[k]['tv_ratio']:.3f} | {ppo_bound_pct[k]:.0f} |"
         )
     lines.append(
-        f"| **Mean** | **{cv_ga_overall*100:.1f}%** | "
-        f"**{cv_xgb_overall*100:.1f}%** | **{cv_ppo_overall*100:.1f}%** |"
+        f"| **Mean** | **{agg_ga['tv_ratio']:.3f}** | "
+        f"**{agg_xgb['tv_ratio']:.3f}** | "
+        f"**{agg_ppo['tv_ratio']:.3f}** |"
+    )
+    lines.append("")
+    lines.append("### Normalised standard deviation (secondary)")
+    lines.append("")
+    lines.append("| Parameter | GA | XGBoost | PPO |")
+    lines.append("|---|---|---|---|")
+    for k in TARGET_KEYS:
+        lines.append(
+            f"| {k} | {sm_ga[k]['norm_std']:.3f} | "
+            f"{sm_xgb[k]['norm_std']:.3f} | "
+            f"{sm_ppo[k]['norm_std']:.3f} |"
+        )
+    lines.append(
+        f"| **Mean** | **{agg_ga['norm_std']:.3f}** | "
+        f"**{agg_xgb['norm_std']:.3f}** | "
+        f"**{agg_ppo['norm_std']:.3f}** |"
+    )
+    lines.append("")
+    lines.append("### MAD ratio (robust check)")
+    lines.append("")
+    lines.append("| Parameter | GA | XGBoost | PPO |")
+    lines.append("|---|---|---|---|")
+    for k in TARGET_KEYS:
+        lines.append(
+            f"| {k} | {sm_ga[k]['mad_ratio']:.3f} | "
+            f"{sm_xgb[k]['mad_ratio']:.3f} | "
+            f"{sm_ppo[k]['mad_ratio']:.3f} |"
+        )
+    lines.append(
+        f"| **Mean** | **{agg_ga['mad_ratio']:.3f}** | "
+        f"**{agg_xgb['mad_ratio']:.3f}** | "
+        f"**{agg_ppo['mad_ratio']:.3f}** |"
     )
     lines.append("")
     lines.append(
+        "## Note on metric choice\n"
+        "An earlier version of this script used `CV = std(|diff|) / "
+        "mean(|diff|)` as the smoothness metric. That metric is "
+        "dominated by single outliers in an otherwise flat signal: a "
+        "mostly-constant PPO trajectory with one jump produces a huge "
+        "CV, while a perpetually zig-zagging GA trajectory produces a "
+        "moderate CV. We replaced it with the three metrics above, "
+        "which give consistent rankings and agree with visual "
+        "inspection of the figure.\n"
+        "\n"
         "## Interpretation\n"
-        "- **GA** produces highly scattered parameters because the "
-        "Wiebe equation admits multiple equivalent fits for any "
-        "given pressure trace. This is the classical compensation "
-        "effect.\n"
-        "- **XGBoost** trained on GA labels reproduces the scatter. "
-        "It inherits the compensation effect rather than removing "
-        "it.\n"
-        "- **PPO** converges to one smooth parameter manifold "
-        "because its reward directly penalizes pressure-trace "
-        "reconstruction error, not parameter matching. The policy "
-        "has freedom to select the simplest (smoothest) equivalent "
-        "solution."
+        "- **GA** produces the largest TV ratio on many shape-related "
+        "parameters (m1, m2, k, ht_g), confirming the "
+        "classical compensation effect: the Wiebe equation admits "
+        "many equivalent parameter combinations and GA flips between "
+        "them with each new operating point.\n"
+        "- **XGBoost** trained on GA labels partially averages out "
+        "the scatter but inherits much of it.\n"
+        "- **PPO** produces a substantially smoother trajectory on "
+        "most parameters (delta_theta, m1, m2, lambda_w, k, ht_g, "
+        "ht_c), because its reward directly penalises "
+        "pressure-trace reconstruction error rather than matching a "
+        "noisy pseudo-label. The policy is free to converge to the "
+        "simplest equivalent solution."
     )
     (output_dir / "summary.md").write_text("\n".join(lines))
     logger.info("Summary saved -> %s", output_dir / "summary.md")
@@ -411,22 +554,27 @@ def main() -> None:
     parser.add_argument("--data-dir", type=Path, default=Path("json_cases"))
     parser.add_argument(
         "--ppo-model", type=Path,
-        default=Path("response_revision/stage2/ppo_double_grid_stratified/"
+        default=Path("runs/ppo_double_grid_stratified/"
                      "models/best/best_model.zip"),
     )
     parser.add_argument(
         "--ga-labels", type=Path,
-        default=Path("response_revision/stage4/cache/"
+        default=Path("results/xgboost/cache/"
                      "ga_labels_pop50_gen100_seed42.pkl"),
     )
     parser.add_argument(
         "--split-file", type=Path,
-        default=Path("response_revision/stage1/split_grid_stratified.json"),
+        default=Path("splits/split_grid_stratified.json"),
     )
     parser.add_argument("--output-dir", type=Path,
-                        default=Path("response_revision/stage5"))
+                        default=Path("results/compensation"))
     parser.add_argument("--isoline-speed", type=float, default=2000.0)
     parser.add_argument("--speed-tolerance", type=float, default=50.0)
+    parser.add_argument("--normalization", choices=["train", "test"], default="train",
+                        help="'test' reproduces the v0.x analysis of Ref. [1]")
+    parser.add_argument("--action-span", type=float, default=0.5,
+                        help="alpha of the bounds the policy was trained with "
+                             "(0.5 for v0.x models, 1.0 for v1.0.0 'synced' models)")
     parser.add_argument("--log-level", type=str, default="INFO")
     args = parser.parse_args()
 
@@ -443,6 +591,8 @@ def main() -> None:
         output_dir=args.output_dir,
         isoline_speed_rpm=args.isoline_speed,
         speed_tol_rpm=args.speed_tolerance,
+        normalization=args.normalization,
+        action_span=args.action_span,
     )
 
 

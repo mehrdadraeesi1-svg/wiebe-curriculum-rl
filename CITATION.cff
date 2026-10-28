@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite both the software and the research article."
+title: "wiebe-curriculum-rl: physics-informed curriculum reinforcement learning for real-time calibration of double Wiebe combustion models"
+version: 1.0.0
+date-released: 2026-10-30
+license: MIT
+repository-code: "https://github.com/mehrdadraeesi1-svg/wiebe-curriculum-rl"
+authors:
+  - family-names: Raeesi
+    given-names: Mehrdad
+    email: mehrdadraeesi@gmail.com
+    affiliation: "School of Automotive Engineering, Iran University of Science and Technology"
+  - family-names: Shojaeefard
+    given-names: Mohammad Hassan
+    affiliation: "School of Automotive Engineering, Iran University of Science and Technology"
+preferred-citation:
+  type: article
+  title: "Physics-informed curriculum learning for real-time calibration of double Wiebe combustion models: a deep reinforcement learning approach"
+  authors:
+    - family-names: Raeesi
+      given-names: Mehrdad
+    - family-names: Shojaeefard
+      given-names: Mohammad Hassan
+  journal: "Energy Conversion and Management: X"
+  volume: 31
+  year: 2026
+  start: 101986
+  doi: "10.1016/j.ecmx.2026.101986"

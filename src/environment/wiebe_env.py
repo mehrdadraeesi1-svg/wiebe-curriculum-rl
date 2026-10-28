@@ -16,7 +16,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
-from data_loader import WiebeDataLoader
+from src.utils.data_loader import WiebeDataLoader
 from src.models.wiebe_functions import single_wiebe, double_wiebe
 from src.utils.thermodynamics import (
     EngineGeometry,
@@ -108,7 +108,19 @@ class WiebeEnvV4(gym.Env):
         seed: Optional[int] = None,
         ca50_penalty: bool = True,
         use_enhanced_obs: bool = True,  # NEW: toggle for enhanced observation
+        normalization: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """
+        Parameters
+        ----------
+        normalization:
+            Optional frozen normalisation statistics (as returned by
+            :meth:`get_normalization`). When given, the operating-condition
+            z-scores, pressure / dP scales and reference geometry are taken
+            from this dictionary instead of being recomputed from ``cases``.
+            Use this at inference time so that new cases are normalised with
+            the statistics of the training set the policy was trained on.
+        """
         super().__init__()
 
         self.wiebe_type = wiebe_type.lower()
@@ -135,8 +147,18 @@ class WiebeEnvV4(gym.Env):
         self.curriculum_schedule = sorted(int(s) for s in schedule)
         self.stage_count = max(len(self.curriculum_schedule), 1)
         self.curriculum_stage = 0
-        self.curriculum_spans = np.linspace(0.5, 1.0, self.stage_count)
-        self.randomization_scales = np.linspace(0.3, 1.0, self.stage_count)
+        # alpha_k (action-bound expansion) and beta_k (noise scaling) per stage.
+        # Defaults: alpha in [0.50, 0.75, 1.00], beta in [0.30, 0.65, 1.00] for
+        # three stages. Note that np.linspace(0.5, 1.0, 1) == [0.5], i.e. a
+        # single-stage configuration uses the stage-1 bounds.
+        spans = self.curriculum_cfg.get("spans")
+        scales = self.curriculum_cfg.get("noise_scales")
+        self.curriculum_spans = (np.asarray(spans, dtype=float) if spans is not None
+                                 else np.linspace(0.5, 1.0, self.stage_count))
+        self.randomization_scales = (np.asarray(scales, dtype=float) if scales is not None
+                                     else np.linspace(0.3, 1.0, self.stage_count))
+        if len(self.curriculum_spans) != self.stage_count or len(self.randomization_scales) != self.stage_count:
+            raise ValueError("curriculum 'spans' and 'noise_scales' must have one entry per stage")
         self.global_step = 0
 
         self.data_dir = data_dir
@@ -144,9 +166,15 @@ class WiebeEnvV4(gym.Env):
         if len(self.cases) == 0:
             raise ValueError("WiebeEnvV4 requires at least one case")
 
-        self.dataset_stats = self._compute_dataset_stats(self.cases)
-        self.pressure_scale, self.dp_scale = self._compute_pressure_scales(self.cases)
-        self.reference_geometry = self._infer_reference_geometry(self.cases)
+        if normalization is not None:
+            self.dataset_stats = {k: float(v) for k, v in normalization["dataset_stats"].items()}
+            self.pressure_scale = float(normalization["pressure_scale"])
+            self.dp_scale = float(normalization["dp_scale"])
+            self.reference_geometry = {k: float(v) for k, v in normalization["reference_geometry"].items()}
+        else:
+            self.dataset_stats = self._compute_dataset_stats(self.cases)
+            self.pressure_scale, self.dp_scale = self._compute_pressure_scales(self.cases)
+            self.reference_geometry = self._infer_reference_geometry(self.cases)
         self.external_traces = self._load_external_traces(Path("data/pressure_traces"))
         self.external_mix_prob = 0.25 if self.external_traces else 0.0
 
@@ -184,6 +212,30 @@ class WiebeEnvV4(gym.Env):
     # ------------------------------------------------------------------
     # Data loading (same as v3)
     # ------------------------------------------------------------------
+    def set_global_step(self, step: int) -> None:
+        """Set the global training step that drives the curriculum.
+
+        With vectorised training each environment instance only counts its own
+        steps, so the curriculum thresholds must be compared against the
+        *total* number of environment steps. ``CurriculumSyncCallback``
+        (src/curriculum.py) calls this method on every sub-environment.
+        """
+        self.global_step = int(step)
+
+    def get_normalization(self) -> Dict[str, Any]:
+        """Return the normalisation statistics used to build observations.
+
+        Save this dictionary next to a trained model (see
+        ``scripts/export_normalization.py``) and pass it back through the
+        ``normalization`` argument when calibrating new cases.
+        """
+        return {
+            "dataset_stats": dict(self.dataset_stats),
+            "pressure_scale": float(self.pressure_scale),
+            "dp_scale": float(self.dp_scale),
+            "reference_geometry": dict(self.reference_geometry),
+        }
+
     def _load_cases(self, data_dir: str) -> List[Dict[str, Any]]:
         loader = WiebeDataLoader(data_dir)
         return loader.load_all_cases()

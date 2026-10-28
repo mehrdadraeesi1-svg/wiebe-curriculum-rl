@@ -5,7 +5,7 @@ Walks the stage 2 output tree, loads each model, and evaluates it on its
 own test set (in-distribution for random/grid splits, out-of-distribution
 for extrapolation/isoline splits). Produces:
 
-    response_revision/stage3/
+    results/benchmark/
         results_per_run.csv           # one row per (split, algorithm, seed)
         summary_by_config.csv         # mean +/- std across seeds
         table6_revised.md             # markdown Table 6 for the paper
@@ -15,7 +15,7 @@ for extrapolation/isoline splits). Produces:
 
 Run from the project root:
 
-    python -m scripts.stage3_evaluate_all --stage2-root response_revision/stage2
+    python scripts/evaluate_all_splits.py --stage2-root runs
 """
 
 from __future__ import annotations
@@ -47,6 +47,8 @@ from src.environment.wiebe_env import (  # noqa: E402
 from stable_baselines3 import PPO, A2C  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+NORMALIZATION = "train"   # set from --normalization in main()
 
 
 SUCCESS_R2_THRESHOLD = 0.95
@@ -125,6 +127,8 @@ def evaluate_single_run(run: Dict[str, Any], data_dir: Path,
     id_to_case = {c["case_id"]: c for c in all_cases}
     test_cases = [id_to_case[cid] for cid in splits["test"]
                   if cid in id_to_case]
+    train_cases = [id_to_case[cid] for cid in splits["train"]
+                   if cid in id_to_case]
 
     if not test_cases:
         raise RuntimeError(f"No test cases found for {run['run_dir']}")
@@ -139,12 +143,17 @@ def evaluate_single_run(run: Dict[str, Any], data_dir: Path,
         data_dir=str(data_dir),
         phys_limits=phys_limits,
         reward_weights=reward_weights,
-        curriculum={"stages": [2], "schedule_steps": [0]},
+        # action bounds the policy was trained with (0.5 for v0.x runs)
+        curriculum={"stages": [0], "schedule_steps": [0],
+                    "spans": [float(meta.get("eval_action_span", 0.5))],
+                    "noise_scales": [0.0]},
         use_enhanced_obs=True,
         seed=42,
+        # 'train': normalise with training-split statistics (v1.0.0 default)
+        # 'test' : recompute statistics from the test cases (v0.x / Ref. [1])
+        normalization=(WiebeEnvV4(wiebe_type="double", cases=train_cases, data_dir="")
+                       .get_normalization() if NORMALIZATION == "train" else None),
     )
-    env.global_step = 10_000_000
-    env.curriculum_stage = max(env.stage_count - 1, 0)
 
     algo_cls = PPO if meta["algorithm"].upper() == "PPO" else A2C
     model = algo_cls.load(str(run["model_path"]), device="cpu")
@@ -441,12 +450,16 @@ def render_paragraph(summary: pd.DataFrame) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--stage2-root", type=Path,
-                        default=Path("response_revision/stage2"))
+                        default=Path("runs"))
     parser.add_argument("--output-dir", type=Path,
-                        default=Path("response_revision/stage3"))
+                        default=Path("results/benchmark"))
     parser.add_argument("--data-dir", type=Path, default=Path("json_cases"))
+    parser.add_argument("--normalization", choices=["train", "test"], default="train",
+                        help="'test' reproduces the v0.x evaluation of Ref. [1]")
     parser.add_argument("--log-level", type=str, default="INFO")
     args = parser.parse_args()
+    global NORMALIZATION
+    NORMALIZATION = args.normalization
 
     logging.basicConfig(
         level=args.log_level,

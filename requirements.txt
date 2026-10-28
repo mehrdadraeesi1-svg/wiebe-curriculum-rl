@@ -1,21 +1,14 @@
-# Core RL
-stable-baselines3>=2.0.0
-gymnasium>=0.29.0
-
-# Scientific computing
-numpy>=1.24.0
-scipy>=1.10.0
-numba>=0.57.0
-
-# Data & ML
-pandas>=2.0.0
-scikit-learn>=1.3.0
-xgboost>=2.0.0
-
-# Visualization
-matplotlib>=3.7.0
-seaborn>=0.12.0
-
-# Utilities
+# Runtime dependencies of wiebe-curriculum-rl v1.0.0
+numpy>=1.24,<3
+scipy>=1.10
+numba>=0.57
+pandas>=2.0
+scikit-learn>=1.3
+torch>=2.0
+gymnasium>=0.29
+stable-baselines3>=2.0,<3
+matplotlib>=3.7
 pyyaml>=6.0
-tqdm>=4.65.0
+tqdm>=4.65
+# optional: XGBoost baseline (scripts/xgboost_baseline.py)
+xgboost>=2.0
